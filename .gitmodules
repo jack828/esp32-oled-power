@@ -1,0 +1,3 @@
+[submodule "libraries/InfluxDB-Client-for-Arduino"]
+	path = libraries/InfluxDB-Client-for-Arduino
+	url = git@github.com:tobiasschuerg/InfluxDB-Client-for-Arduino.git

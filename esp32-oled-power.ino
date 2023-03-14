@@ -1,6 +1,8 @@
+#include "definitions.h"
 #include "credentials.h"
 #include "font.h"
 #include "images.h"
+#include "influx.h"
 #include <WiFi.h>
 #include <SSD1306Wire.h>
 #include <OLEDDisplayUi.h>
@@ -11,7 +13,6 @@ SSD1306Wire display(0x3c, 5, 4);
 OLEDDisplayUi ui(&display);
 
 uint64_t setupMillis;
-
 
 void titleOverlay(OLEDDisplay *display, OLEDDisplayUiState *state) {
   display->setTextAlignment(TEXT_ALIGN_LEFT);
@@ -78,7 +79,15 @@ LoadingStage loadingStages[] = {
       Serial.println(WiFi.localIP());
       Serial.println();
       /* </WIFI> */
-    } }
+    } },
+  { .process = "Connecting to InfluxDB", .callback = []() {
+     setupInfluxOptions();
+     boolean influxOk = validateInfluxConnection();
+     if (!influxOk) {
+       // literally no point in being here
+       ESP.restart();
+     }
+   } }
 };
 
 int LOADING_STAGES_COUNT = sizeof(loadingStages) / sizeof(LoadingStage);
@@ -122,15 +131,82 @@ void initialiseUi() {
   ui.runLoadingProcess(loadingStages, LOADING_STAGES_COUNT);
 }
 
-
 void setup() {
   Serial.begin(115200);
   setupMillis = millis();
   pinMode(LED_PIN, OUTPUT);
 
   initialiseUi();
+
+  // Only create the tasks after all setup is done, and we're ready
+  xTaskCreate(
+    wifiKeepAlive,
+    "wifiKeepAlive",  // Task name
+    16192,            // Stack size (bytes)
+    NULL,             // Parameter
+    1,                // Task priority
+    NULL              // Task handle
+  );
 }
 
+/**
+ * Task: monitor the WiFi connection and keep it alive
+ *
+ * When a WiFi connection is established, this task will check it every 10
+ * seconds to make sure it's still alive.
+ *
+ * If not, a reconnect is attempted. If this fails to finish within the timeout,
+ * the ESP32 will wait for it to recover and try again.
+ */
+void wifiKeepAlive(void *parameter) {
+  uint8_t failCount = 0;
+  for (;;) {
+    Serial.print(F("[ WIFI ] Keep alive "));
+    bool wifiConnected = (WiFi.RSSI() == 0) || WiFi.status() == WL_CONNECTED;
+    Serial.println(wifiConnected ? F("OK") : F("NOT OK"));
+    if (wifiConnected) {
+      bool influxOk = validateInfluxConnection();
+      if (!influxOk) {
+        Serial.println(F("[ NODE ] Rebooting..."));
+        Serial.flush();
+        ESP.restart();
+      }
+      vTaskDelay(10000 / portTICK_PERIOD_MS);
+      continue;
+    }
+
+    Serial.println(F("[ WIFI ] Connecting"));
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PSK);
+
+    uint64_t startAttemptTime = millis();
+
+    // Keep looping while we're not connected and haven't reached the timeout
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < WIFI_TIMEOUT_MS) {
+      digitalWrite(LED_PIN, HIGH);
+      delay(250);
+      digitalWrite(LED_PIN, LOW);
+      delay(250);
+    }
+
+    // When we couldn't make a WiFi connection (or the timeout expired)
+    // sleep for a while and then retry.
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.print(F("[ WIFI ] Failed"));
+      Serial.println(failCount);
+      if (failCount++ > 5) {
+        Serial.println(
+          F("\n[ WIFI ] ERROR: Could not connect to wifi, rebooting..."));
+        ESP.restart();
+      }
+      vTaskDelay(WIFI_RECOVER_TIME_MS / portTICK_PERIOD_MS);
+      continue;
+    }
+
+    Serial.print(F("\n[ WIFI ] Connected: "));
+    Serial.println(WiFi.localIP());
+  }
+}
 
 void loop() {
   int remainingTimeBudget = ui.update();
