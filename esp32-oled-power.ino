@@ -8,6 +8,7 @@
 #include <NTPClient.h>
 #include <SSD1306Wire.h>
 #include <OLEDDisplayUi.h>
+#include <ArduinoJson.h>
 
 #define LED_PIN 16
 
@@ -18,6 +19,11 @@ SSD1306Wire display(0x3c, 5, 4);
 OLEDDisplayUi ui(&display);
 
 uint64_t setupMillis;
+// The docs say this is a BAD IDEA AND DON NOT DO IT
+// But the docs aren't the police
+DynamicJsonDocument data(2048);
+int32_t lastUpdate = 0;
+int32_t metricUpdateInterval = 10 * 1000;
 
 void titleOverlay(OLEDDisplay *display, OLEDDisplayUiState *state) {
   display->setTextAlignment(TEXT_ALIGN_LEFT);
@@ -99,6 +105,9 @@ LoadingStage loadingStages[] = {
        // literally no point in being here
        ESP.restart();
      }
+   } },
+  { .process = "Getting Metrics", .callback = []() {
+     updateMetrics();
    } }
 };
 
@@ -141,6 +150,48 @@ void initialiseUi() {
   display.flipScreenVertically();
 
   ui.runLoadingProcess(loadingStages, LOADING_STAGES_COUNT);
+}
+
+void updateMetrics() {
+  Serial.println("UPDATING METRICS");
+  data.clear();
+
+  String query = urlEncode(
+      "SELECT last(\"power\"), last(\"irms\") "
+      "FROM \"sensors\" "
+      "WHERE time >= now() - 1h "
+      "GROUP BY time(1h), \"location\" "
+      "fill(linear) "
+      "LIMIT 1"
+      );
+  WiFiClient client;
+  HTTPClient http;
+
+  http.useHTTP10(true);
+  http.begin(client, INFLUXDB_URL "/query?db=" INFLUXDB_DB "&q=" + query);
+  int responseCode = http.GET();
+  if (responseCode != 200) {
+    Serial.printf("Bad response: %d\n", responseCode);
+    Serial.println(http.getStream());
+  }
+
+  DynamicJsonDocument doc(2048);
+  deserializeJson(doc, http.getStream());
+
+  Serial.println(doc["results"][0]["series"].as<String>());
+
+  JsonArray nodes = doc["results"][0]["series"];
+  for (JsonVariant node : nodes) {
+    JsonObject reading = data.createNestedObject();
+    reading["location"] = node["tags"]["location"].as<String>();
+    reading["value"] = node["values"][0][1].as<double>();
+    // Serial.println(node.as<String>());
+  }
+
+  serializeJson(data, Serial);
+  Serial.printf("mem usage %d\n", data.memoryUsage());
+  http.end();
+  lastUpdate = millis();
 }
 
 void setup() {
@@ -230,6 +281,9 @@ void loop() {
     // You can do some work here
     while (!timeClient.update()) {
       timeClient.forceUpdate();
+    }
+    if (millis() - lastUpdate > metricUpdateInterval) {
+      updateMetrics();
     }
   }
 }

@@ -4,3 +4,6 @@
 [submodule "libraries/NTPClient"]
 	path = libraries/NTPClient
 	url = git@github.com:arduino-libraries/NTPClient.git
+[submodule "libraries/ArduinoJson"]
+	path = libraries/ArduinoJson
+	url = git@github.com:bblanchon/ArduinoJson.git
