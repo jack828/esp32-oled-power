@@ -4,10 +4,15 @@
 #include "images.h"
 #include "influx.h"
 #include <WiFi.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
 #include <SSD1306Wire.h>
 #include <OLEDDisplayUi.h>
 
 #define LED_PIN 16
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "uk.pool.ntp.org", 0, 1000);
 
 SSD1306Wire display(0x3c, 5, 4);
 OLEDDisplayUi ui(&display);
@@ -20,10 +25,10 @@ void titleOverlay(OLEDDisplay *display, OLEDDisplayUiState *state) {
   display->drawString(0, 0, (char *)state->userData);
 }
 
-void nameOverlay(OLEDDisplay *display, OLEDDisplayUiState *state) {
+void timeOverlay(OLEDDisplay *display, OLEDDisplayUiState *state) {
   display->setTextAlignment(TEXT_ALIGN_RIGHT);
   display->setFont(Monospaced_plain_10);
-  display->drawString(128, 0, "Power");
+  display->drawString(128, 0, timeClient.getFormattedTime());
 }
 
 void drawFrame1(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) {
@@ -80,6 +85,13 @@ LoadingStage loadingStages[] = {
       Serial.println();
       /* </WIFI> */
     } },
+  { .process = "Initialising NTP", .callback = []() {
+     timeClient.begin();
+     while (!timeClient.update()) {
+       timeClient.forceUpdate();
+     }
+     Serial.println(timeClient.getFormattedTime());
+   } },
   { .process = "Connecting to InfluxDB", .callback = []() {
      setupInfluxOptions();
      boolean influxOk = validateInfluxConnection();
@@ -100,7 +112,7 @@ FrameCallback frames[] = { drawFrame1 };
 int FRAME_COUNT = sizeof(frames) / sizeof(FrameCallback);
 
 // Overlays are statically drawn on top of a frame eg. a clock
-OverlayCallback overlays[] = { titleOverlay, nameOverlay };
+OverlayCallback overlays[] = { titleOverlay, timeOverlay };
 int OVERLAY_COUNT = sizeof(overlays) / sizeof(OverlayCallback);
 
 
@@ -216,5 +228,8 @@ void loop() {
       Serial.println("WiFi not connected!");
     }
     // You can do some work here
+    while (!timeClient.update()) {
+      timeClient.forceUpdate();
+    }
   }
 }

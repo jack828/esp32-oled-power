@@ -1,3 +1,6 @@
 [submodule "libraries/InfluxDB-Client-for-Arduino"]
 	path = libraries/InfluxDB-Client-for-Arduino
 	url = git@github.com:tobiasschuerg/InfluxDB-Client-for-Arduino.git
+[submodule "libraries/NTPClient"]
+	path = libraries/NTPClient
+	url = git@github.com:arduino-libraries/NTPClient.git
